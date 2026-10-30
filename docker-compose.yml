@@ -1,0 +1,167 @@
+# Tudo roda em containers na rede "jungle". Nada precisa ser instalado na máquina além do Docker.
+#
+#   docker compose up -d --build            # sobe infra + migrations + 3 instâncias
+#   docker compose run --rm test            # roda todas as suítes de teste
+#
+# REGISTRY permite trocar o registry de imagens (ex.: REGISTRY=mirror.gcr.io) sem editar o arquivo.
+
+name: jungle-wagering
+
+x-app: &app
+  build:
+    context: .
+    args:
+      REGISTRY: ${REGISTRY:-docker.io}
+  image: jungle-wagering-app:local
+  restart: unless-stopped
+  stop_grace_period: 30s
+  environment: &app-env
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: jungle
+    DB_USER: chimp
+    DB_PASSWORD: "CaptainFox&Parrot"
+    SQS_ENDPOINT: http://localstack:4566
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    AUTH_ENABLED: "true"
+    AUTH_ISSUER: http://keycloak:8080/realms/jungle
+    AUTH_JWKS_URI: http://keycloak:8080/realms/jungle/protocol/openid-connect/certs
+    LOG_LEVEL: info
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    localstack:
+      condition: service_healthy
+    keycloak:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+  networks: [jungle]
+
+services:
+  postgres:
+    image: ${REGISTRY:-docker.io}/library/postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    command: ["postgres", "-c", "max_connections=300"]
+    volumes:
+      - ./docker/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chimp -d jungle"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [jungle]
+
+  localstack:
+    image: ${REGISTRY:-docker.io}/localstack/localstack:4.0
+    environment:
+      SERVICES: sqs
+      AWS_DEFAULT_REGION: us-east-1
+      SQS_ENDPOINT_STRATEGY: path
+    volumes:
+      - ./docker/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh:ro
+    ports: ["4566:4566"]
+    healthcheck:
+      # pronto somente depois que o script de init criou as filas
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wallet-events.fifo >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    networks: [jungle]
+
+  keycloak:
+    image: ${REGISTRY:-docker.io}/keycloak/keycloak:26.3
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ./docker/keycloak/realm-jungle.json:/opt/keycloak/data/import/realm-jungle.json:ro
+    ports: ["8080:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # a imagem não tem curl/wget: usa o /dev/tcp do bash contra a porta de management
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    networks: [jungle]
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["bun", "run", "src/infrastructure/persistence/migrate.ts", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  app-1:
+    <<: *app
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-1
+    ports: ["3001:3000"]
+
+  app-2:
+    <<: *app
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-2
+    ports: ["3002:3000"]
+
+  app-3:
+    <<: *app
+    environment:
+      <<: *app-env
+      INSTANCE_ID: app-3
+    ports: ["3003:3000"]
+
+  # Executor de testes: mesma imagem, sem expor portas. Acessa as instâncias e a infra pela rede jungle.
+  test:
+    <<: *app
+    restart: "no"
+    profiles: [test]
+    command: ["bun", "run", "test:all"]
+    environment:
+      <<: *app-env
+      APP_URLS: http://app-1:3000,http://app-2:3000,http://app-3:3000
+      KEYCLOAK_URL: http://keycloak:8080
+      LOG_LEVEL: warn
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      # permite que os testes de crash recovery derrubem e reiniciem instâncias (docker kill / start)
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      app-3:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+volumes:
+  pgdata:
+
+networks:
+  jungle:
+    name: jungle
