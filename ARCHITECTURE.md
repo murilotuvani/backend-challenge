@@ -44,7 +44,7 @@ livre do ORM (exigência 6.1) e evita depender de `emitDecoratorMetadata` no Bun
 | ORM | **MikroORM** (driver PostgreSQL) | Preferencial no desafio. `em.transactional()` e `LockMode.PESSIMISTIC_WRITE` expressam exatamente a estratégia abaixo |
 | Migrations | MikroORM Migrator, com `up` e `down` escritos à mão em SQL | Constraints, triggers e índices parciais são parte da avaliação, então ficam explícitos em SQL e não gerados |
 | Fila | LocalStack (SQS) | Mais documentado e estável que o MiniStack |
-| IdP | **Keycloak** | Sua escolha. OIDC completo, realm importado de JSON para ser reproduzível |
+| IdP | **Keycloak** | OIDC completo, realm importado de JSON para ser reproduzível |
 | Logs | `pino` (JSON) + `AsyncLocalStorage` para o contexto | Rápido, estruturado e funciona no Bun |
 | Métricas | `prom-client`, exposto em `GET /metrics` | Padrão de mercado, fácil de demonstrar |
 | IDs | UUIDv7 | Ordenáveis no tempo, o que deixa o cursor do ledger estável e os índices B-tree eficientes |

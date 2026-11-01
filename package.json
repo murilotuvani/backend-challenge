@@ -12,6 +12,7 @@
     "test:unit": "bun test test/unit",
     "test:integration": "bun test --timeout 60000 test/integration",
     "test:concurrency": "bun test --timeout 120000 test/concurrency",
+    "test:multi-currency": "bun test --timeout 60000 test/multi-currency",
     "test:all": "bun test --timeout 120000 test",
     "test:load": "bun run test/load/load-test.ts"
   },

@@ -43,6 +43,7 @@ docker compose run --rm test                         # tudo: unitários, integra
 docker compose run --rm test bun run test:unit       # só unitários (sem infraestrutura)
 docker compose run --rm test bun run test:integration
 docker compose run --rm test bun run test:concurrency
+docker compose run --rm test bun run test:multi-currency # um jogador com quatro wallets (BRL, USD, EUR, CHF)
 docker compose run --rm test bun run test:load       # teste de carga (diferencial), relatório em load-results/
 ```
 
@@ -57,6 +58,7 @@ os testes de falha poderem matar (`SIGKILL`) e reiniciar instâncias reais. **Ne
 | `test/integration/sqs-consumer` | Inbox e redelivery, rejeição de negócio com ack, DLQ para erro permanente, retry com backoff, tentativas esgotadas → DLQ + `FAILED`, **worker morto depois do commit e antes do ack** (processo filho), SIGTERM |
 | `test/concurrency/wallet-races` | Mesma aposta 50× em paralelo, 2 apostas de 80.00 sobre 100.00, hot wallet com 150 apostas, wallets distintas em paralelo, REFUND × ROLLBACK simultâneos, reversão antes da referência — tudo distribuído entre as 3 instâncias |
 | `test/concurrency/restart-recovery` | `SIGKILL` e restart de instâncias durante carga HTTP + SQS; prova que cada operação confirmada existe uma vez, a fila drena, a outbox é publicada e saldo == ledger |
+| `test/multi-currency` | Suíte separada: um jogador com quatro wallets (BRL, USD, EUR, CHF). No domínio, `CurrencyMismatchError` em `debit`/`credit`/`canDebit` e em `Money` para as 12 combinações de moeda; caixa-preta, unicidade (jogador, moeda) com 409, criação simultânea, isolamento entre as wallets e rejeição 422 `CURRENCY_MISMATCH` (com replay) sem alterar saldo nem ledger |
 
 Todas as suítes que tocam o banco terminam verificando a invariante `wallet.balance == saldo reconstruído pelo ledger` para todas as wallets.
 
